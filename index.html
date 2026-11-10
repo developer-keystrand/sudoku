@@ -21,7 +21,7 @@
       <option value="medium" selected>Medium</option>
       <option value="hard">Hard</option>
     </select>
-    <span id="timer" aria-live="off">0:00</span>
+    <span id="info"><span id="timer" aria-live="off">0:00</span> · <span id="mistakes" title="Mistakes">0 ✗</span></span>
     <button id="new" type="button">New</button>
   </header>
   <div id="board" role="grid" aria-label="Sudoku board"></div>
@@ -30,9 +30,14 @@
     <button id="undo" type="button">Undo</button>
     <button id="erase" type="button">Erase</button>
     <button id="notes" type="button" aria-pressed="false">Notes</button>
+    <button id="stats" type="button">Stats</button>
   </nav>
   <nav id="pad"></nav>
 </main>
+<dialog id="history" aria-label="Statistics and history">
+  <div id="historyBody"></div>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
 <script type="module" src="app.js"></script>
 </body>
 </html>

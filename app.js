@@ -1,11 +1,13 @@
 import { generate, conflicts, isComplete, peers } from "./sudoku.js";
+import { score, addResult, stats, isBestScore } from "./history.js";
 
 const SAVE_KEY = "sudoku-save-v1";
+const HISTORY_KEY = "sudoku-history-v1";
 const $ = (id) => document.getElementById(id);
 const boardEl = $("board"), padEl = $("pad"), msgEl = $("message"), timerEl = $("timer");
-const diffEl = $("difficulty");
+const diffEl = $("difficulty"), mistakesEl = $("mistakes");
 
-let game;            // { puzzle, solution, values, notes, difficulty, elapsed, won }
+let game;            // { puzzle, solution, values, notes, difficulty, elapsed, mistakes, won, result }
 let selected = -1;
 let notesMode = false;
 let undoStack = [];
@@ -14,7 +16,7 @@ let tickStart = 0;   // performance.now() of last timer tick; 0 when paused
 // ---- state ----------------------------------------------------------------
 function newGame(difficulty) {
   const { puzzle, solution } = generate(difficulty);
-  game = { puzzle, solution, values: puzzle.slice(), notes: new Array(81).fill(0), difficulty, elapsed: 0, won: false };
+  game = { puzzle, solution, values: puzzle.slice(), notes: new Array(81).fill(0), difficulty, elapsed: 0, mistakes: 0, won: false, result: null };
   selected = -1; undoStack = [];
   save(); render();
 }
@@ -26,9 +28,30 @@ function save() {
 function load() {
   try {
     const g = JSON.parse(localStorage.getItem(SAVE_KEY));
-    if (g && g.puzzle?.length === 81 && g.values?.length === 81 && g.notes?.length === 81) return g;
+    if (g && g.puzzle?.length === 81 && g.values?.length === 81 && g.notes?.length === 81) {
+      g.mistakes = Number(g.mistakes) || 0;   // saves from before scoring have no count
+      return g;
+    }
   } catch { /* corrupt save: fall through */ }
   return null;
+}
+
+function loadHistory() {
+  try {
+    const h = JSON.parse(localStorage.getItem(HISTORY_KEY));
+    if (Array.isArray(h)) return h;
+  } catch { /* corrupt history: start again */ }
+  return [];
+}
+
+function record(won) {
+  const history = loadHistory();
+  const seconds = Math.round(game.elapsed);
+  const result = { date: new Date().toISOString(), difficulty: game.difficulty, seconds,
+    mistakes: game.mistakes, won, score: won ? score(game.difficulty, seconds, game.mistakes) : 0 };
+  if (won) result.best = isBestScore(history, game.difficulty, result.score);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(addResult(history, result))); } catch { /* full: ignore */ }
+  return result;
 }
 
 function snapshot() {
@@ -47,6 +70,7 @@ function place(d) {
     snapshot();
     const same = game.values[selected] === d;
     game.values[selected] = same ? 0 : d;
+    if (!same && d !== game.solution[selected]) game.mistakes++;
     game.notes[selected] = 0;
     if (!same) for (const p of peers(selected)) game.notes[p] &= ~(1 << d);
   }
@@ -69,7 +93,7 @@ function undo() {
 }
 
 function afterChange() {
-  if (isComplete(game.values)) { game.won = true; stopTimer(); }
+  if (isComplete(game.values)) { game.won = true; stopTimer(); game.result = record(true); }
   save(); render();
 }
 
@@ -112,7 +136,10 @@ $("notes").addEventListener("click", () => {
   $("notes").setAttribute("aria-pressed", notesMode);
 });
 $("new").addEventListener("click", () => {
-  if (game.won || !game.values.some((v, i) => v !== game.puzzle[i]) || confirm("Abandon this game and start a new one?")) {
+  const started = game.values.some((v, i) => v !== game.puzzle[i]);
+  if (game.won || !started) return newGame(diffEl.value);
+  if (confirm("Abandon this game and start a new one?")) {
+    stopTimer(); record(false); startTimer();
     newGame(diffEl.value);
   }
 });
@@ -152,8 +179,51 @@ function render() {
   diffEl.value = game.difficulty;
   timerEl.textContent = fmt(game.elapsed);
   msgEl.className = game.won ? "win" : "";
-  msgEl.textContent = game.won ? `Solved in ${fmt(game.elapsed)}` : "";
+  mistakesEl.textContent = `${game.mistakes ?? 0} ✗`;
+  const r = game.result;
+  msgEl.textContent = !game.won ? "" : r
+    ? `Solved in ${fmt(r.seconds)} · ${r.mistakes} mistake${r.mistakes === 1 ? "" : "s"} · ${r.score} pts${r.best ? " · New best!" : ""}`
+    : `Solved in ${fmt(game.elapsed)}`;
 }
+
+// ---- stats dialog ---------------------------------------------------------
+function showStats() {
+  const history = loadHistory();
+  const body = $("historyBody");
+  body.replaceChildren();
+  const el = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; };
+  const row = (cells, tag = "td", cls) => {
+    const tr = document.createElement("tr");
+    cells.forEach((c, i) => tr.append(el(tag, c, i === 0 ? undefined : cls)));
+    return tr;
+  };
+  const dash = (v, f = (x) => x) => (v == null ? "–" : f(v));
+
+  body.append(el("h2", "Records"));
+  const t1 = document.createElement("table");
+  t1.append(row(["", "Won", "Best", "Fastest", "Avg"], "th"));
+  for (const d of ["easy", "medium", "hard"]) {
+    const s = stats(history, d);
+    t1.append(row([d[0].toUpperCase() + d.slice(1), `${s.won}/${s.played}`, dash(s.bestScore), dash(s.bestTime, fmt), dash(s.avgTime, fmt)]));
+  }
+  body.append(t1);
+
+  body.append(el("h2", "Recent games"));
+  if (!history.length) { body.append(el("p", "No games yet.", "empty")); }
+  else {
+    const t2 = document.createElement("table");
+    t2.append(row(["Date", "Level", "Time", "✗", "Score"], "th"));
+    for (const r of history.slice(-20).reverse()) {
+      const when = new Date(r.date).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      const tr = row([when, r.difficulty, fmt(r.seconds), r.mistakes, r.won ? r.score : "gave up"]);
+      if (!r.won) tr.lastChild.className = "lost";
+      t2.append(tr);
+    }
+    body.append(t2);
+  }
+  $("history").showModal();
+}
+$("stats").addEventListener("click", showStats);
 
 // ---- boot -----------------------------------------------------------------
 game = load();
