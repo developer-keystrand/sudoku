@@ -1,5 +1,5 @@
 // Cache-first so the game works offline. Bump VERSION when any file changes.
-const VERSION = "sudoku-v2";
+const VERSION = "sudoku-v3";
 const FILES = ["./", "index.html", "style.css", "app.js", "sudoku.js", "history.js", "manifest.webmanifest",
   "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
 

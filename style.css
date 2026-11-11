@@ -55,3 +55,13 @@ th:first-child, td:first-child { text-align: left; }
 th { color: var(--muted); font-weight: 500; }
 td.lost { color: var(--muted); }
 .empty { color: var(--muted); }
+#scorebar { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; font-size: 18px; color: var(--muted); }
+#points { color: var(--fg); font-size: 24px; font-variant-numeric: tabular-nums; }
+#streak { color: var(--entry); font-variant-numeric: tabular-nums; }
+#delta { font-style: normal; margin-left: 8px; opacity: 0; font-variant-numeric: tabular-nums; }
+#delta.show { animation: delta 1.2s ease-out; }
+#delta.good { color: var(--entry); }
+#delta.bad { color: var(--bad); }
+@keyframes delta { 0% { opacity: 1; transform: translateY(4px); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { #delta.show { animation: none; opacity: 1; } }
+dialog .how { margin: 14px 0 0; font-size: 13px; color: var(--muted); line-height: 1.4; }

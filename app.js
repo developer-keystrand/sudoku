@@ -1,13 +1,14 @@
 import { generate, conflicts, isComplete, peers } from "./sudoku.js";
-import { score, addResult, stats, isBestScore } from "./history.js";
+import { SCORING_VERSION, correctPoints, mistakePenalty, timeBonus, addResult, stats, isBestScore } from "./history.js";
 
 const SAVE_KEY = "sudoku-save-v1";
 const HISTORY_KEY = "sudoku-history-v1";
 const $ = (id) => document.getElementById(id);
 const boardEl = $("board"), padEl = $("pad"), msgEl = $("message"), timerEl = $("timer");
 const diffEl = $("difficulty"), mistakesEl = $("mistakes");
+const pointsEl = $("points"), streakEl = $("streak"), deltaEl = $("delta");
 
-let game;            // { puzzle, solution, values, notes, difficulty, elapsed, mistakes, won, result }
+let game;            // { puzzle, solution, values, notes, difficulty, elapsed, mistakes, points, streak, scored, bonus, won, result }
 let selected = -1;
 let notesMode = false;
 let undoStack = [];
@@ -16,7 +17,8 @@ let tickStart = 0;   // performance.now() of last timer tick; 0 when paused
 // ---- state ----------------------------------------------------------------
 function newGame(difficulty) {
   const { puzzle, solution } = generate(difficulty);
-  game = { puzzle, solution, values: puzzle.slice(), notes: new Array(81).fill(0), difficulty, elapsed: 0, mistakes: 0, won: false, result: null };
+  game = { puzzle, solution, values: puzzle.slice(), notes: new Array(81).fill(0), difficulty, elapsed: 0, mistakes: 0, points: 0, streak: 0,
+    scored: new Array(81).fill(0), bonus: 0, won: false, result: null };
   selected = -1; undoStack = [];
   save(); render();
 }
@@ -30,6 +32,10 @@ function load() {
     const g = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (g && g.puzzle?.length === 81 && g.values?.length === 81 && g.notes?.length === 81) {
       g.mistakes = Number(g.mistakes) || 0;   // saves from before scoring have no count
+      g.points = Number(g.points) || 0;
+      g.streak = Number(g.streak) || 0;
+      g.bonus = Number(g.bonus) || 0;
+      if (!Array.isArray(g.scored) || g.scored.length !== 81) g.scored = g.values.map((v, i) => (v && !g.puzzle[i] ? 1 : 0));
       return g;
     }
   } catch { /* corrupt save: fall through */ }
@@ -47,8 +53,8 @@ function loadHistory() {
 function record(won) {
   const history = loadHistory();
   const seconds = Math.round(game.elapsed);
-  const result = { date: new Date().toISOString(), difficulty: game.difficulty, seconds,
-    mistakes: game.mistakes, won, score: won ? score(game.difficulty, seconds, game.mistakes) : 0 };
+  const result = { v: SCORING_VERSION, date: new Date().toISOString(), difficulty: game.difficulty, seconds,
+    mistakes: game.mistakes, bonus: won ? game.bonus : 0, won, score: won ? game.points : 0 };
   if (won) result.best = isBestScore(history, game.difficulty, result.score);
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(addResult(history, result))); } catch { /* full: ignore */ }
   return result;
@@ -70,11 +76,37 @@ function place(d) {
     snapshot();
     const same = game.values[selected] === d;
     game.values[selected] = same ? 0 : d;
-    if (!same && d !== game.solution[selected]) game.mistakes++;
+    if (!same) score(d);
     game.notes[selected] = 0;
     if (!same) for (const p of peers(selected)) game.notes[p] &= ~(1 << d);
   }
   afterChange();
+}
+
+// Running score. Each cell pays out once (so undo + retype can't farm points) and only a
+// scoring digit extends the streak; a wrong digit costs points every time and resets it.
+function score(d) {
+  if (d === game.solution[selected]) {
+    if (game.scored[selected]) return;
+    game.scored[selected] = 1;
+    game.streak++;
+    const gain = correctPoints(game.difficulty, game.streak);
+    game.points += gain;
+    showDelta(`+${gain}`, "good");
+  } else {
+    game.mistakes++;
+    game.streak = 0;
+    const loss = Math.min(game.points, mistakePenalty(game.difficulty));
+    game.points -= loss;
+    showDelta(`−${loss}`, "bad");
+  }
+}
+
+function showDelta(text, kind) {
+  deltaEl.textContent = text;
+  deltaEl.className = "";
+  void deltaEl.offsetWidth;   // restart the animation
+  deltaEl.className = `show ${kind}`;
 }
 
 function erase() {
@@ -93,7 +125,12 @@ function undo() {
 }
 
 function afterChange() {
-  if (isComplete(game.values)) { game.won = true; stopTimer(); game.result = record(true); }
+  if (isComplete(game.values)) {
+    game.won = true; stopTimer();
+    game.bonus = timeBonus(game.difficulty, game.elapsed);
+    game.points += game.bonus;
+    game.result = record(true);
+  }
   save(); render();
 }
 
@@ -179,10 +216,12 @@ function render() {
   diffEl.value = game.difficulty;
   timerEl.textContent = fmt(game.elapsed);
   msgEl.className = game.won ? "win" : "";
-  mistakesEl.textContent = `${game.mistakes ?? 0} ✗`;
+  mistakesEl.textContent = `${game.mistakes} ✗`;
+  pointsEl.textContent = game.points;
+  streakEl.textContent = game.streak >= 2 ? `Streak ×${game.streak}` : "";
   const r = game.result;
   msgEl.textContent = !game.won ? "" : r
-    ? `Solved in ${fmt(r.seconds)} · ${r.mistakes} mistake${r.mistakes === 1 ? "" : "s"} · ${r.score} pts${r.best ? " · New best!" : ""}`
+    ? `Solved in ${fmt(r.seconds)} · ${r.mistakes} mistake${r.mistakes === 1 ? "" : "s"} · ${r.score} pts${r.bonus ? ` (${r.bonus} time bonus)` : ""}${r.best ? " · New best!" : ""}`
     : `Solved in ${fmt(game.elapsed)}`;
 }
 
@@ -221,6 +260,10 @@ function showStats() {
     }
     body.append(t2);
   }
+  body.append(el("p",
+    "Score: each correct digit earns 10 points plus 2 per correct digit in a row (up to 20 extra), a mistake costs 25 and ends the streak, "
+    + "and finishing under 10 minutes adds 1 point per second left. Easy ×1, Medium ×2, Hard ×3. "
+    + "Undoing a move doesn't give points back.", "how"));
   $("history").showModal();
 }
 $("stats").addEventListener("click", showStats);
