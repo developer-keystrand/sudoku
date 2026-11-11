@@ -1,5 +1,5 @@
 import { generate, conflicts, isComplete, peers } from "./sudoku.js";
-import { SCORING_VERSION, correctPoints, mistakePenalty, timeBonus, addResult, stats, isBestScore } from "./history.js";
+import { SCORING_VERSION, correctPoints, mistakePenalty, timeBonus, addResult, stats, isBestScore } from "./history.js?v=4";
 
 const SAVE_KEY = "sudoku-save-v1";
 const HISTORY_KEY = "sudoku-history-v1";
@@ -226,7 +226,7 @@ function render() {
 }
 
 // ---- stats dialog ---------------------------------------------------------
-function showStats() {
+async function showStats() {
   const history = loadHistory();
   const body = $("historyBody");
   body.replaceChildren();
@@ -264,6 +264,8 @@ function showStats() {
     "Score: each correct digit earns 10 points plus 2 per correct digit in a row (up to 20 extra), a mistake costs 25 and ends the streak, "
     + "and finishing under 10 minutes adds 1 point per second left. Easy ×1, Medium ×2, Hard ×3. "
     + "Undoing a move doesn't give points back.", "how"));
+  const keys = "caches" in window ? await caches.keys().catch(() => []) : [];
+  body.append(el("p", `Version: ${keys.find((k) => k.startsWith("sudoku-")) ?? "not cached"}`, "how"));
   $("history").showModal();
 }
 $("stats").addEventListener("click", showStats);
@@ -273,4 +275,7 @@ game = load();
 if (game) render(); else newGame("medium");
 startTimer();
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+// Check for a new service worker on every open; browsers otherwise do it rarely.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then((reg) => reg.update()).catch(() => {});
+}
